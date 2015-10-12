@@ -9,65 +9,58 @@ import java.util.Collections;
 import java.util.ArrayList;
 
 
-import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
-import android.app.Activity;
 import android.content.Context;
 import android.graphics.Point;
-import android.os.Handler;
-import android.os.SystemClock;
 import android.util.AttributeSet;
-import android.util.DisplayMetrics;
 import android.view.ViewTreeObserver;
-import android.view.animation.AlphaAnimation;
 import android.view.animation.Animation;
-import android.view.animation.AnimationSet;
-import android.view.animation.ScaleAnimation;
 import android.view.animation.TranslateAnimation;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AdapterView.OnItemClickListener;
-import android.widget.ImageView;
+import android.widget.ScrollView;
 
 public class DraggableGridView extends ViewGroup implements View.OnTouchListener, View.OnClickListener, View.OnLongClickListener {
 
-    public static int animT = 150;
 
     protected int colCount = 2; // 每行个数
     protected int childSize; // 每行元素的高度必须一致，为该值
-    protected int dpi;
 
-    protected float lastDelta = 0;
-    protected Handler handler = new Handler();
+    public static int animT = 150;
     //dragging vars
     protected int dragged = -1;         // 拖动的是哪个view
     protected int lastTarget = -1;      // 拖动到了哪个view的位置
-    protected int lastX = -1;
-    protected int lastY = -1;
-    protected boolean enabled = true, touching = false;
+    protected int lastX = -1;           // 拖动的手指位置
+    protected int lastY = -1;           // 拖动的手指位置
     protected ArrayList<Integer> newPositions = new ArrayList<Integer>();
     //listeners
     protected OnRearrangeListener onRearrangeListener;
     protected OnClickListener secondaryOnClickListener;
-    protected Runnable updateTask = new Runnable() {
-        public void run() {
-            performLayout(getLeft(), getTop(), getRight(), getBottom());
-            handler.postDelayed(this, 25);
-        }
-    };
     private OnItemClickListener onItemClickListener;
+    private OnDragScrollListener onDragScrollListener;
 
-    //CONSTRUCTOR AND HELPERS
+    private ScrollView parentScrollView;
+    private ScrollState scrollState = ScrollState.idle;
+
+    private enum ScrollState {
+        top, bottom, idle
+    }
+
+    public interface OnRearrangeListener {
+        void onRearrange(int dragged, int lastTarget);
+    }
+
+    public interface OnDragScrollListener {
+        void onDragScrollTop();
+        void onDragScrollBottom();
+    }
+
     public DraggableGridView(Context context, AttributeSet attrs) {
         super(context, attrs);
         setListeners();
-        handler.removeCallbacks(updateTask);
-        handler.postAtTime(updateTask, SystemClock.uptimeMillis() + 500);
         setChildrenDrawingOrderEnabled(true);
-
-        DisplayMetrics metrics = context.getResources().getDisplayMetrics();
-        dpi = metrics.densityDpi;
     }
 
     protected void setListeners() {
@@ -88,12 +81,18 @@ public class DraggableGridView extends ViewGroup implements View.OnTouchListener
         newPositions.add(-1);
     }
 
-    ;
-
     @Override
     public void removeViewAt(int index) {
         super.removeViewAt(index);
         newPositions.remove(index);
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (getParent() instanceof ScrollView) {
+             parentScrollView = (ScrollView) getParent();
+        }
     }
 
     @Override
@@ -180,17 +179,13 @@ public class DraggableGridView extends ViewGroup implements View.OnTouchListener
 
     //EVENT HANDLERS
     public void onClick(View view) {
-        if (enabled) {
-            if (secondaryOnClickListener != null)
-                secondaryOnClickListener.onClick(view);
-            if (onItemClickListener != null && getLastIndex() != -1)
-                onItemClickListener.onItemClick(null, getChildAt(getLastIndex()), getLastIndex(), getLastIndex() / colCount);
-        }
+        if (secondaryOnClickListener != null)
+            secondaryOnClickListener.onClick(view);
+        if (onItemClickListener != null && getLastIndex() != -1)
+            onItemClickListener.onItemClick(null, getChildAt(getLastIndex()), getLastIndex(), getLastIndex() / colCount);
     }
 
     public boolean onLongClick(View view) {
-        if (!enabled)
-            return false;
         getParent().requestDisallowInterceptTouchEvent(true);
         int index = getLastIndex();
         if (index != -1) {
@@ -205,16 +200,26 @@ public class DraggableGridView extends ViewGroup implements View.OnTouchListener
         int action = event.getAction();
         switch (action & MotionEvent.ACTION_MASK) {
             case MotionEvent.ACTION_DOWN:
-                enabled = true;
                 lastX = (int) event.getX();
                 lastY = (int) event.getY();
-                touching = true;
+                scrollState = ScrollState.idle;
                 break;
             case MotionEvent.ACTION_MOVE:
-                int delta = lastY - (int) event.getY();
                 if (dragged != -1) {
-                    //change draw location of dragged visual
                     int x = (int) event.getX(), y = (int) event.getY();
+                    float px = getResources().getDisplayMetrics().density * 20 + 0.5f;
+                    if (onDragScrollListener != null && parentScrollView != null) {
+                        if (y > parentScrollView.getHeight() + parentScrollView.getScrollY() - px) {
+                            scrollState = ScrollState.bottom;
+                            post(scrollRunnable);
+                        } else if (y - parentScrollView.getScrollY() < px) {
+                            scrollState = ScrollState.top;
+                            post(scrollRunnable);
+                        } else {
+                            scrollState = ScrollState.idle;
+                            removeCallbacks(scrollRunnable);
+                        }
+                    }
                     int l = x - childSize / 2, t = y - childSize / 2;
                     getChildAt(dragged).layout(l, t, l + childSize, t + childSize);
 
@@ -227,22 +232,19 @@ public class DraggableGridView extends ViewGroup implements View.OnTouchListener
                         }
                     }
                 } else {
-                    if (Math.abs(delta) > 2)
-                        enabled = false;
                     performLayout(getLeft(), getTop(), getRight(), getBottom());
                 }
                 lastX = (int) event.getX();
                 lastY = (int) event.getY();
-                lastDelta = delta;
                 break;
             case MotionEvent.ACTION_UP:
+                scrollState = ScrollState.idle;
                 if (dragged != -1) {
                     View v = getChildAt(dragged);
                     reorderChildren();
                     v.clearAnimation();
                     dragged = -1;
                 }
-                touching = false;
                 getParent().requestDisallowInterceptTouchEvent(false);
                 break;
         }
@@ -318,8 +320,9 @@ public class DraggableGridView extends ViewGroup implements View.OnTouchListener
     }
 
     protected void reorderChildren() {
-        if (onRearrangeListener != null)
+        if (onRearrangeListener != null) {
             onRearrangeListener.onRearrange(dragged, lastTarget);
+        }
         ArrayList<View> children = new ArrayList<View>();
         for (int i = 0; i < getChildCount(); i++) {
             getChildAt(i).clearAnimation();
@@ -389,7 +392,25 @@ public class DraggableGridView extends ViewGroup implements View.OnTouchListener
         this.onRearrangeListener = l;
     }
 
+    public void setOnDragScrollListener(OnDragScrollListener l) {
+        onDragScrollListener = l;
+    }
+
     public void setOnItemClickListener(OnItemClickListener l) {
         this.onItemClickListener = l;
     }
+
+    private Runnable scrollRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (scrollState != ScrollState.idle) {
+                if (scrollState == ScrollState.top) {
+                    onDragScrollListener.onDragScrollTop();
+                } else if (scrollState == ScrollState.bottom){
+                    onDragScrollListener.onDragScrollBottom();
+                }
+                postDelayed(this, 20);
+            }
+        }
+    };
 }
