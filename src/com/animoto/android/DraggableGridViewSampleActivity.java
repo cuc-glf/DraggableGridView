@@ -11,12 +11,15 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.os.Bundle;
+import android.view.LayoutInflater;
 import android.view.View;
 import android.view.View.OnClickListener;
+import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.AdapterView.OnItemClickListener;
 import android.widget.Button;
 import android.widget.ImageView;
+import android.widget.TextView;
 
 import com.animoto.android.views.*;
 
@@ -60,8 +63,9 @@ public class DraggableGridViewSampleActivity extends Activity {
     	button1.setOnClickListener(new OnClickListener() {
 			public void onClick(View arg0) {
 				String word = words[random.nextInt(words.length)];
-				ImageView view = new ImageView(DraggableGridViewSampleActivity.this);
-				view.setImageBitmap(getThumb(word));
+				TextView view = (TextView) LayoutInflater.from(DraggableGridViewSampleActivity.this).inflate(R.layout.text, (DraggableGridView) findViewById(R.id.vgv), false);
+                view.setBackgroundColor(Color.rgb(random.nextInt(128), random.nextInt(128), random.nextInt(128)));
+				view.setText(word);
 				dgv.addView(view);
 				poem.add(word);
 			}
